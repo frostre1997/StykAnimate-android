@@ -9,14 +9,14 @@ pub struct Renderer {
     queue: Option<wgpu::Queue>,
     config: Option<wgpu::SurfaceConfiguration>,
     pipeline: Option<wgpu::RenderPipeline>,
-    // Keep the NativeWindow alive while wgpu is using it.
     _window: Option<ndk::native_window::NativeWindow>,
 }
 
 impl Renderer {
     pub fn new() -> Self {
         Self {
-            instance: wgpu::Instance::new(wgpu::InstanceDescriptor {
+            // wgpu 24: Instance::new takes &InstanceDescriptor
+            instance: wgpu::Instance::new(&wgpu::InstanceDescriptor {
                 backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
                 ..Default::default()
             }),
@@ -30,15 +30,18 @@ impl Renderer {
     }
 
     pub fn attach_surface(&mut self, window: ndk::native_window::NativeWindow) {
-        // Tear down any previous surface first (rotation / resume).
         self.detach_surface();
 
         let width = window.width() as u32;
         let height = window.height() as u32;
 
-        let raw_display = RawDisplayHandle::Android(AndroidDisplayHandle::empty());
-        let raw_window =
-            RawWindowHandle::AndroidNdk(AndroidNdkWindowHandle::new(window.ptr().cast()));
+        // raw-window-handle 0.6: AndroidDisplayHandle::new() replaces ::empty()
+        let raw_display = RawDisplayHandle::Android(AndroidDisplayHandle::new());
+
+        // raw-window-handle 0.6: AndroidNdkWindowHandle::new takes NonNull<c_void>
+        let anw_ptr = std::ptr::NonNull::new(window.ptr().cast::<std::ffi::c_void>())
+            .expect("ANativeWindow is null");
+        let raw_window = RawWindowHandle::AndroidNdk(AndroidNdkWindowHandle::new(anw_ptr));
 
         let target = wgpu::SurfaceTargetUnsafe::RawHandle {
             raw_display_handle: raw_display,
@@ -48,14 +51,7 @@ impl Renderer {
         let surface = unsafe { self.instance.create_surface_unsafe(target) }
             .expect("create_surface_unsafe failed");
 
-        let caps = surface.get_capabilities(&self.instance);
-        let format = caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| f.is_srgb())
-            .unwrap_or(caps.formats[0]);
-
+        // NOTE: adapter must exist before querying capabilities.
         let adapter = pollster::block_on(self.instance.request_adapter(
             &wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -64,6 +60,14 @@ impl Renderer {
             },
         ))
         .expect("No compatible adapter");
+
+        let caps = surface.get_capabilities(&adapter);
+        let format = caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| f.is_srgb())
+            .unwrap_or(caps.formats[0]);
 
         let (device, queue) = pollster::block_on(
             adapter.request_device(&wgpu::DeviceDescriptor::default(), None),
@@ -140,7 +144,6 @@ impl Renderer {
     }
 
     pub fn detach_surface(&mut self) {
-        // Drop the surface before the window so wgpu releases Vulkan/GL resources first.
         self.pipeline = None;
         self.surface = None;
         self.config = None;
@@ -170,7 +173,8 @@ impl Renderer {
                 log::error!("Surface out of memory");
                 return;
             }
-            Err(wgpu::SurfaceError::Timeout) => return,
+            // wgpu 24 added SurfaceError::Other — handle it explicitly.
+            Err(wgpu::SurfaceError::Timeout) | Err(wgpu::SurfaceError::Other) => return,
         };
 
         let view = output.texture.create_view(&Default::default());
