@@ -39,10 +39,9 @@ impl Renderer {
         let raw_display = RawDisplayHandle::Android(AndroidDisplayHandle::new());
 
         // raw-window-handle 0.6: AndroidNdkWindowHandle::new takes NonNull<c_void>
-        let anw_ptr = std::ptr::NonNull::new(window.ptr().cast::<std::ffi::c_void>())
-            .expect("ANativeWindow is null");
+        let anw_ptr: std::ptr::NonNull<std::ffi::c_void> = window.ptr().cast();
         let raw_window = RawWindowHandle::AndroidNdk(AndroidNdkWindowHandle::new(anw_ptr));
-
+        
         let target = wgpu::SurfaceTargetUnsafe::RawHandle {
             raw_display_handle: raw_display,
             raw_window_handle: raw_window,
