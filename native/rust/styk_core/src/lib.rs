@@ -1,8 +1,8 @@
 use std::sync::Mutex;
 
 use jni::JNIEnv;
-use jni::objects::{JClass, JObject};
-use jni::sys::{jlong, jint};
+use jni::objects::JClass;
+use jni::sys::jlong;
 
 mod renderer;
 use renderer::Renderer;
@@ -36,15 +36,17 @@ pub extern "system" fn Java_com_styk_animate_StykCore_nativeDestroy(
 
 #[no_mangle]
 pub extern "system" fn Java_com_styk_animate_StykCore_nativeAttachSurface(
-    env: JNIEnv, _class: JClass, handle: jlong, surface: JObject,
+    env: *mut jni::sys::JNIEnv,
+    _class: jni::sys::jclass,
+    handle: jlong,
+    surface: jni::sys::jobject,
 ) {
     let renderer = unsafe { &*(handle as *const Mutex<Renderer>) };
     let mut r = renderer.lock().unwrap();
 
-    // Convert Java Surface -> ANativeWindow* via the NDK helper.
-    // The returned NativeWindow owns a reference that must outlive the wgpu surface.
+    // from_surface wants raw jni-sys pointers: *mut JNIEnv and jobject
     let native_window = unsafe {
-        ndk::native_window::NativeWindow::from_surface(&env, &surface)
+        ndk::native_window::NativeWindow::from_surface(env, surface)
             .expect("Failed to obtain ANativeWindow from Surface")
     };
 
